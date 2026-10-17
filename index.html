@@ -1,0 +1,111 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#000000"><title>Grok Bot Voice</title>
+<link rel="manifest" href="manifest.json"><link rel="icon" href="icon192.png"><link rel="apple-touch-icon" href="icon192.png">
+<style>
+*{box-sizing:border-box}body{margin:0;background:#000;color:#fff;font:17px system-ui,sans-serif;text-align:center;padding:14px 14px 40px}
+h1{font-size:20px;margin:6px 0 10px;letter-spacing:.5px}
+.row{display:flex;gap:8px;justify-content:center;align-items:center;flex-wrap:wrap}
+select,input,.pill{background:#111;color:#fff;border:1px solid #333;border-radius:10px;padding:10px 12px;font-size:16px}
+.pill{cursor:pointer}.pill.on{background:#ff8a1f;color:#000;border-color:#ff8a1f}
+#mic{width:min(62vw,250px);height:min(62vw,250px);border-radius:50%;border:0;margin:22px auto 10px;display:block;
+ background:radial-gradient(circle at 35% 30%,#ffb066,#ff8a1f 60%,#c45e00);color:#000;font-size:22px;font-weight:700;box-shadow:0 0 0 0 #ff8a1f80;transition:transform .1s}
+#mic:active{transform:scale(.97)}#mic.listen{animation:pulse 1.2s infinite;background:radial-gradient(circle at 35% 30%,#ff8080,#ff3b3b 60%,#a00)}
+#mic.busy{background:radial-gradient(circle at 35% 30%,#9ec5ff,#3b82f6 60%,#1d4ed8)}
+@keyframes pulse{0%{box-shadow:0 0 0 0 #ff3b3b90}100%{box-shadow:0 0 0 28px #ff3b3b00}}
+#state{color:#bbb;min-height:24px}#live{color:#888;min-height:22px;font-style:italic}
+#log{text-align:left;margin-top:14px}.m{padding:9px 12px;border-radius:12px;margin:7px 0;max-width:92%;line-height:1.35;word-wrap:break-word}
+.me{background:#1f2937;margin-left:auto}.bot{background:#2a1a08;border:1px solid #5a3510}.m small{display:block;color:#888;font-size:12px;margin-top:3px}
+details{text-align:left;background:#0b0b0b;border:1px solid #222;border-radius:12px;padding:10px;margin-top:16px}
+details input{width:100%;margin:4px 0 10px}label{font-size:13px;color:#aaa}summary{cursor:pointer;color:#ddd}
+.dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:#555;margin-right:6px}.dot.ok{background:#3ddc84}.dot.bad{background:#ff3b3b}
+button.small{background:#222;color:#ddd;border:1px solid #333;border-radius:8px;padding:8px 12px;font-size:14px}
+</style></head><body>
+<h1>Grok Bot Voice</h1>
+<div class="row">
+ <select id="bot" aria-label="Bot"></select>
+ <span class="pill on" data-lang="en-US">EN</span><span class="pill" data-lang="ta-IN">தமிழ்</span>
+</div>
+<button id="mic" aria-label="Tap to talk">Tap to talk</button>
+<div id="state">Tap once to start</div><div id="live"></div>
+<div class="row" style="margin-top:6px;font-size:13px;color:#999"><span><span id="dot" class="dot"></span><span id="sub">Not listening for replies</span></span></div>
+<div id="log"></div>
+<details id="set"><summary>Settings (saved on this phone only)</summary>
+ <label>Send URL (relay or webhook)</label><input id="url" inputmode="url" autocomplete="off" placeholder="https://…/send">
+ <label>Webhook key</label><input id="key" type="password" autocomplete="off" placeholder="paste once">
+ <label>Reply topic (ntfy) — use your watch's topic so watch replies are spoken too</label><input id="topic" autocomplete="off" placeholder="vb-…">
+ <label><input type="checkbox" id="speakAll" style="width:auto"> Speak every message on the topic (incl. watch taps &amp; nudges)</label><br><br>
+ <button class="small" id="save">Save</button> <button class="small" id="clear">Clear history</button>
+</details>
+<script>
+const $=id=>document.getElementById(id), S=localStorage;
+const BOTS=["Builder","Chief Of Staff","Investor","Floor Lead","Grok Bot","MoonShot","Producer"];
+BOTS.forEach(b=>$('bot').add(new Option(b,b)));
+// Optional prefill from the link's #hash (never sent to any server): #url=…&topic=…
+const H=new URLSearchParams(location.hash.slice(1));
+['url','topic','key'].forEach(k=>{if(H.get(k))S[k]=H.get(k)});
+if(location.hash){history.replaceState(null,'',location.pathname+location.search)}
+if(!S.url&&location.protocol==='https:'&&false)S.url=location.origin+'/send';
+if(S.speakAll===undefined)S.speakAll='1';
+$('bot').value=S.bot||'Builder';$('bot').onchange=()=>S.bot=$('bot').value;
+const fill=()=>{['url','key','topic'].forEach(k=>$(k).value=S[k]||'');$('speakAll').checked=S.speakAll==='1'};fill();
+$('save').onclick=()=>{['url','key','topic'].forEach(k=>S[k]=$(k).value.trim());S.speakAll=$('speakAll').checked?'1':'0';listen();$('state').textContent='Saved';$('set').open=false};
+let lang=S.lang||'en-US';
+document.querySelectorAll('.pill').forEach(p=>{p.classList.toggle('on',p.dataset.lang===lang);p.onclick=()=>{lang=S.lang=p.dataset.lang;
+ document.querySelectorAll('.pill').forEach(q=>q.classList.toggle('on',q===p))}});
+if(!S.url||!S.key||!S.topic)$('set').open=true;
+
+// History
+let hist=JSON.parse(S.hist||'[]');
+const draw=()=>{$('log').innerHTML='';hist.slice(-60).reverse().forEach(h=>{const d=document.createElement('div');d.className='m '+(h.me?'me':'bot');
+ d.textContent=(h.me?'🗣 ':'🤖 ')+h.t;const s=document.createElement('small');s.textContent=(h.bot?h.bot+' · ':'')+new Date(h.at).toLocaleTimeString();d.append(s);$('log').append(d)})};
+const add=(t,me,bot)=>{hist.push({t,me,bot,at:Date.now()});hist=hist.slice(-200);S.hist=JSON.stringify(hist);draw()};
+$('clear').onclick=()=>{hist=[];S.hist='[]';draw()};draw();
+
+// Speech out (plays through earbuds when connected)
+let unlocked=false,mine=new Set(),t0=0;
+const voiceFor=l=>speechSynthesis.getVoices().find(v=>v.lang.replace('_','-').startsWith(l.slice(0,2)));
+const say=(t,l)=>{const u=new SpeechSynthesisUtterance(t);const L=l||(/[\u0B80-\u0BFF]/.test(t)?'ta-IN':'en-US');u.lang=L;const v=voiceFor(L);if(v)u.voice=v;speechSynthesis.speak(u)};
+const unlock=()=>{if(unlocked)return;unlocked=true;try{const u=new SpeechSynthesisUtterance(' ');u.volume=0;speechSynthesis.speak(u);
+ const C=window.AudioContext||window.webkitAudioContext;if(C){const c=new C();c.resume();const o=c.createOscillator(),g=c.createGain();g.gain.value=0;o.connect(g).connect(c.destination);o.start();o.stop(c.currentTime+.05)}}catch(e){}
+ if(navigator.wakeLock)navigator.wakeLock.request('screen').catch(()=>{})};
+document.addEventListener('pointerdown',unlock,{once:false});
+
+// Replies: subscribe to ntfy topic via SSE and speak each new message
+let es=null,seen=new Set(JSON.parse(S.seen||'[]'));
+function listen(){if(es)es.close();const tp=(S.topic||'').trim();if(!tp){$('sub').textContent='No reply topic set';return}
+ es=new EventSource('https://ntfy.sh/'+encodeURIComponent(tp)+'/sse');
+ es.onopen=()=>{$('dot').className='dot ok';$('sub').textContent='Listening for replies'};
+ es.onerror=()=>{$('dot').className='dot bad';$('sub').textContent='Reconnecting…'};
+ es.onmessage=e=>{let m;try{m=JSON.parse(e.data)}catch(_){return}if(m.event!=='message'||seen.has(m.id))return;
+  seen.add(m.id);S.seen=JSON.stringify([...seen].slice(-100));
+  const text=(m.title?m.title+'. ':'')+(m.message||'');if(!text.trim())return;
+  const waiting=t0&&Date.now()-t0<180000;
+  add(m.message||text,false,waiting?$('bot').value:'');
+  if(waiting){$('state').textContent='Reply in '+((Date.now()-t0)/1000).toFixed(1)+'s';t0=0;$('mic').className=''}
+  if(waiting||S.speakAll==='1'){if(!unlocked)$('state').textContent='New message — tap anywhere once to enable audio';else say(text)}};}
+listen();
+document.addEventListener('visibilitychange',()=>{if(!document.hidden&&(!es||es.readyState===2))listen()});
+
+// Speech in
+const SR=window.SpeechRecognition||window.webkitSpeechRecognition;let rec=null,listening=false;
+async function send(text){
+ if(!S.url||!S.key||!S.topic){$('set').open=true;$('state').textContent='Fill in settings first';return}
+ add(text,true,$('bot').value);t0=Date.now();$('mic').className='busy';$('state').textContent='On it…';say(lang==='ta-IN'?'சரி':'On it',lang);
+ const payload={request:text,bot:$('bot').value,reply_topic:S.topic,sent_at:new Date().toISOString(),source:'phone-voice',lang};
+ try{if(/script\.google(usercontent)?\.com/.test(S.url)){ // Apps Script relay: simple request, no preflight; errors come back on the topic
+   await fetch(S.url,{method:'POST',mode:'no-cors',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({key:S.key,payload})});return}
+  const r=await fetch(S.url,{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+S.key},body:JSON.stringify(payload)});
+  if(!r.ok){$('state').textContent=r.status===401?'Key rejected (401) — check settings':'Send failed: HTTP '+r.status;$('mic').className='';t0=0}}
+ catch(err){$('state').textContent='Could not reach send URL (network/CORS)';$('mic').className='';t0=0}}
+$('mic').onclick=()=>{unlock();
+ if(!SR){const t=prompt('Voice input not supported here. Type your message:');if(t)send(t);return}
+ if(listening){rec.stop();return}
+ speechSynthesis.cancel();rec=new SR();rec.lang=lang;rec.interimResults=true;rec.maxAlternatives=1;rec.continuous=false;let final='';
+ rec.onstart=()=>{listening=true;$('mic').className='listen';$('mic').textContent='Listening…';$('state').textContent='Speak now — tap to stop';$('live').textContent=''};
+ rec.onresult=e=>{let interim='';for(const r of e.results){if(r.isFinal)final+=r[0].transcript;else interim+=r[0].transcript}$('live').textContent=final+interim};
+ rec.onerror=e=>{$('state').textContent=e.error==='not-allowed'?'Mic blocked — allow microphone for this site':'Mic: '+e.error};
+ rec.onend=()=>{listening=false;$('mic').textContent='Tap to talk';if($('mic').className==='listen')$('mic').className='';$('live').textContent='';
+  const t=final.trim();if(t)send(t);else if(!/Mic/.test($('state').textContent))$('state').textContent='Didn\u2019t catch that — tap to try again'};
+ try{rec.start()}catch(e){$('state').textContent='Mic: '+e.message}};
+</script></body></html>
